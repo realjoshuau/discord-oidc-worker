@@ -39,16 +39,16 @@ async function loadOrGenerateKeyPair(KV) {
 const app = new Hono()
 
 app.get('/authorize/:scopemode', async (c) => {
+	const clientId = c.req.query('client_id')
+	const clientConfig = config.clients[clientId]
 
-	if (c.req.query('client_id') !== config.clientId
-		|| c.req.query('redirect_uri') !== config.redirectURL
-		|| !['guilds', 'email'].includes(c.req.param('scopemode'))) {
+	if (!clientConfig || c.req.query('redirect_uri') !== clientConfig.redirectURL || !['guilds', 'email'].includes(c.req.param('scopemode'))) {
 		return c.text('Bad request.', 400)
 	}
 
 	const params = new URLSearchParams({
-		'client_id': config.clientId,
-		'redirect_uri': config.redirectURL,
+		'client_id': clientId,
+		'redirect_uri': clientConfig.redirectURL,
 		'response_type': 'code',
 		'scope': c.req.param('scopemode') == 'guilds' ? 'identify email guilds' : 'identify email',
 		'state': c.req.query('state'),
@@ -61,10 +61,21 @@ app.get('/authorize/:scopemode', async (c) => {
 app.post('/token', async (c) => {
 	const body = await c.req.parseBody()
 	const code = body['code']
+	const clientId = body['client_id'];
+	const clientConfig = config.clients[clientId]
+
+	if (!clientConfig) {
+		return c.text('Bad request.', 400)
+	}
+
+	if (!body['client_secret'] || body['client_secret'] !== clientConfig.clientSecret) {
+		return c.text('Bad request.', 400)
+	}
+
 	const params = new URLSearchParams({
-		'client_id': config.clientId,
-		'client_secret': config.clientSecret,
-		'redirect_uri': config.redirectURL,
+		'client_id': clientConfig.clientId,
+		'client_secret': clientConfig.clientSecret,
+		'redirect_uri': clientConfig.redirectURL,
 		'code': code,
 		'grant_type': 'authorization_code',
 		'scope': 'identify email'
@@ -104,8 +115,8 @@ app.post('/token', async (c) => {
 
 	let roleClaims = {}
 
-	if (c.env.DISCORD_TOKEN && 'serversToCheckRolesFor' in config) {
-		await Promise.all(config.serversToCheckRolesFor.map(async guildId => {
+	if (c.env.DISCORD_TOKEN && 'serversToCheckRolesFor' in clientConfig) {
+		await Promise.all(clientConfig.serversToCheckRolesFor.map(async guildId => {
 			if (servers.includes(guildId)) {
 				let memberPromise = fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${userInfo['id']}`, {
 					headers: {
